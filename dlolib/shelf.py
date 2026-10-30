@@ -164,16 +164,31 @@ class Shelf:
             self._save(data)
             return {"ok": True, "book": b["title"], "reader": reader, "status": status}
 
-    def read(self, book: str, reader: str, chars: int = DEFAULT_CHUNK, restart: bool = False) -> dict:
-        """从 reader 上次读到的地方往下读一段（停在段落结尾），进度和今天读了多少字都记下来。"""
-        limit = (self.lib.config.get("shelf", {}) or {}).get("dailyChars")
+    def daily_limit(self, who: str):
+        """每人每天最多读多少字。dailyChars 可以是一个数（所有人一样），也可以是 {"default": N, "某人": M}。没设 = 不限。"""
+        cfg = (self.lib.config.get("shelf", {}) or {}).get("dailyChars")
+        if isinstance(cfg, dict):
+            cfg = cfg.get(who, cfg.get("default"))
+        try:
+            return int(cfg) if cfg else None
+        except (TypeError, ValueError):
+            return None
+
+    def read(self, book: str, reader: str, chars: int = DEFAULT_CHUNK, restart: bool = False,
+             charge: str | None = None) -> dict:
+        """从 reader 上次读到的地方往下读一段（停在段落结尾），进度和今天读了多少字都记下来。
+
+        charge：今天读的字算在谁头上（默认就是 reader）。几个人「一起读」时进度共用同一个读者名，
+        但每个人每天读了多少还是各算各的，所以调用方把 charge 写成真正在读的那个人。"""
+        payer = charge or reader
+        limit = self.daily_limit(payer)
         with locked(self.file):
             data = self._load()
             b = self._find(data, book)
             day = today()
-            done_today = b["readLog"].get(day, {}).get(reader, 0)
+            done_today = sum(x.get("readLog", {}).get(day, {}).get(payer, 0) for x in data["books"])   # 今天所有书加起来
             if limit and done_today >= limit:
-                return {"ok": False, "error": f"今天已经读了 {done_today} 字，明天再接着读吧", "todayChars": done_today}
+                return {"ok": False, "error": "今天读得不少了，明天接着读吧", "todayChars": done_today, "limitReached": True}
             text = (self.dir / b["file"]).read_text(encoding="utf-8")
             pos = 0 if restart else int(b["progress"].get(reader, 0))
             chars = max(200, min(int(chars or DEFAULT_CHUNK), 6000))
@@ -185,10 +200,10 @@ class Shelf:
                 end = nl + 1
             piece = text[pos:end]
             b["progress"][reader] = end
-            b["status"].setdefault(reader, "reading")
-            if end >= len(text):
-                b["status"][reader] = "done"
-            b["readLog"].setdefault(day, {})[reader] = done_today + len(piece)
+            for who in {reader, payer}:                  # 一起读的时候，读的人自己的状态也跟着走
+                b["status"][who] = "done" if end >= len(text) else "reading"      # 想读的书读起来就变成在读
+            log = b["readLog"].setdefault(day, {})
+            log[payer] = log.get(payer, 0) + len(piece)
             self._save(data)
             return {"ok": True, "title": b["title"], "text": piece, "from": pos, "to": end, "total": len(text),
                     "percent": round(100 * end / max(1, len(text)), 1), "finished": end >= len(text),

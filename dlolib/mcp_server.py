@@ -15,6 +15,7 @@ import json
 import sys
 
 from . import render
+from .shelf import READ_STATUS
 from .store import STATUSES, Library
 
 PROTOCOL = "2024-11-05"
@@ -70,6 +71,13 @@ TOOLS = [
             "required": ["book"]},
     },
     {
+        "name": "shelf_status",
+        "description": "给书架上的一本书标一下你自己的状态：想读（want）、在读（reading）、读完了（done）。",
+        "inputSchema": {"type": "object", "properties": {
+            "book": {"type": "string", "description": "书名或书 id"},
+            "status": {"type": "string", "enum": ["want", "reading", "done"]}}, "required": ["book", "status"]},
+    },
+    {
         "name": "shelf_bookmark",
         "description": "在现在读到的位置夹一个书签，可以写一句自己的感想。",
         "inputSchema": {"type": "object", "properties": {
@@ -118,19 +126,29 @@ class Handler:
 
             def line(b):
                 mine, together = b["progress"].get(who, 0), b["progress"].get(TOGETHER, 0)
+                state = READ_STATUS.get((b.get("status") or {}).get(who), "")
                 extra = f"；一起读到 {together} 字" if together else ""
-                return f"《{b['title']}》{b['author'] or ''}　你读到 {mine}/{b['chars']} 字{extra}"
+                return f"《{b['title']}》{b['author'] or ''}　{('（' + state + '）') if state else ''}你读到 {mine}/{b['chars']} 字{extra}"
             return "\n".join(line(b) for b in rows)
+        if name == "shelf_status":
+            r = shelf.set_status(str(args.get("book", "")), who, str(args.get("status", "")))
+            return f"记下了：《{r['book']}》{READ_STATUS[r['status']]}。" if r["ok"] else "没改成：" + r["error"]
         if name == "shelf_read":
             r = shelf.read(str(args.get("book", "")), reader_of(args), chars=int(args.get("chars") or 1500),
-                           restart=bool(args.get("restart")))
+                           restart=bool(args.get("restart")), charge=who)
             if not r["ok"]:
-                return r["error"]
+                return r["error"], {"tool": "shelf_read", "ok": False, "limitReached": bool(r.get("limitReached"))}
             tail = "（这本读完了）" if r["finished"] else f"（读到 {r['percent']}%）"
-            return f"《{r['title']}》\n{r['text']}\n{tail}"
+            return f"《{r['title']}》\n{r['text']}\n{tail}", {
+                "tool": "shelf_read", "ok": True, "title": r["title"], "chars": len(r["text"]), "from": r["from"],
+                "to": r["to"], "total": r["total"], "finished": r["finished"], "todayChars": r["todayChars"],
+                "together": bool(args.get("together"))}
         if name == "shelf_bookmark":
             r = shelf.bookmark(str(args.get("book", "")), reader_of(args), note=str(args.get("note", "")))
-            return f"夹好了：《{r['book']}》第 {r['bookmark']['pos']} 字处。"
+            m = r["bookmark"]
+            return f"夹好了：《{r['book']}》第 {m['pos']} 字处。", {
+                "tool": "shelf_bookmark", "ok": True, "title": r["book"], "pos": m["pos"], "quote": m["quote"],
+                "note": m["note"], "together": bool(args.get("together"))}
         raise KeyError(f"没有这个工具：{name}")
 
     # ── 协议 ──
@@ -152,13 +170,18 @@ class Handler:
 
     def _tool_result(self, params: dict) -> dict:
         """调用一个工具，把结果（或「没成功」的说明）包成 MCP 的 content。出错要告诉调用方，不能让服务挂掉。"""
+        structured = None
         try:
             text, is_error = self.call(params.get("name", ""), params.get("arguments") or {}), False
+            if isinstance(text, tuple):                 # 书架工具：（给 AI 看的话，给接入程序用的结构化结果）
+                text, structured = text
         except (KeyError, TimeoutError) as e:
             text, is_error = str(e.args[0]) if e.args else str(e), True
         except Exception as e:                          # noqa: BLE001
             text, is_error = f"没成功（{type(e).__name__}）", True
         out = {"content": [{"type": "text", "text": text}]}
+        if structured is not None:
+            out["structuredContent"] = structured
         if is_error:
             out["isError"] = True
         return out

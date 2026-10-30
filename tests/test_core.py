@@ -542,6 +542,32 @@ class ShelfTests(Base):
         self.assertEqual(self.shelf.reading_log(1)[next(iter(self.shelf.reading_log(1)))]["fish"], total)
         self.assertTrue(self.shelf.read("小书", "sister", chars=1000)["ok"])       # 上限是各人各算
 
+    def test_daily_limit_per_person_and_across_books(self):
+        """dailyChars 可以按人写；今天读的字是所有书加起来算；一起读的字算在读的人头上。"""
+        self.lib.config["shelf"] = {"dailyChars": {"default": 100000, "fish": 1200}}
+        self.shelf.add(self.txt, title="小书", rights="public-domain", by="owner")
+        other = self.tmp / "另一本.txt"
+        other.write_text(self.body, encoding="utf-8")
+        self.shelf.add(other, title="另一本", rights="public-domain", by="owner")
+        self.assertEqual(self.shelf.daily_limit("fish"), 1200)
+        self.assertEqual(self.shelf.daily_limit("sister"), 100000)
+        r1 = self.shelf.read("小书", "together", chars=800, charge="fish")        # 一起读，算在 fish 头上
+        self.assertTrue(r1["ok"])
+        r2 = self.shelf.read("另一本", "fish", chars=800)                          # 换一本书也接着算
+        self.assertTrue(r2["ok"])
+        self.assertLessEqual(r2["todayChars"], 1200 + 300)
+        r3 = self.shelf.read("另一本", "fish", chars=800)
+        self.assertFalse(r3["ok"])
+        self.assertTrue(r3["limitReached"])
+        self.assertNotRegex(r3["error"], r"\d")                                    # 提示里不露出具体数字
+        self.assertTrue(self.shelf.read("小书", "together", chars=800, charge="sister")["ok"])   # 姐姐的额度没动
+
+    def test_together_reading_updates_both_statuses(self):
+        self.shelf.add(self.txt, title="小书", rights="public-domain", by="owner")
+        self.shelf.read("小书", "together", chars=600, charge="sister")
+        st = self.shelf.list()[0]["status"]
+        self.assertEqual((st["together"], st["sister"]), ("reading", "reading"))
+
     def test_status_and_bookmarks(self):
         self.shelf.add(self.txt, title="小书", rights="public-domain", by="owner")
         self.assertTrue(self.shelf.set_status("小书", "fish", "want")["ok"])
@@ -710,7 +736,7 @@ class McpTests(Base):
         self.assertIsNone(h.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
         names = {t["name"] for t in self.rpc(h, "tools/list")["result"]["tools"]}
         self.assertEqual(names, {"library_lookup", "library_save", "library_mark", "library_scan",
-                                 "shelf_list", "shelf_read", "shelf_bookmark"})
+                                 "shelf_list", "shelf_read", "shelf_status", "shelf_bookmark"})
         self.assertIn("error", self.rpc(h, "no/such"))
 
     def test_tool_descriptions_are_gentle(self):
@@ -763,6 +789,29 @@ class McpTests(Base):
         t, err = self.text(h, "shelf_read", book="小书", chars=500)
         self.assertIn("第一段", t)
         self.assertIn("夹好了", self.text(h, "shelf_bookmark", book="小书", note="好")[0])
+
+    def test_shelf_structured_results_and_status(self):
+        """书架工具除了文字，还带结构化结果（接入程序用：读了多少字、读完没有、书签的位置）；文字照旧给 AI 看。"""
+        d = Path(tempfile.mkdtemp(prefix="dlolib-mcp3-"))
+        self.homes.append(d)
+        f = d / "短书.txt"
+        f.write_text("只有一小段文字。\n" * 30, encoding="utf-8")
+        self.lib.shelf().add(f, title="短书", rights="user-owned", by="owner")
+        h = mcp_server.Handler(self.lib, "fish")
+        r = self.rpc(h, "tools/call", {"name": "shelf_read", "arguments": {"book": "短书", "chars": 6000}})["result"]
+        sc = r["structuredContent"]
+        self.assertTrue(sc["ok"] and sc["finished"] and sc["chars"] > 0 and sc["todayChars"] == sc["chars"])
+        self.assertIn("这本读完了", r["content"][0]["text"])
+        self.lib.config["shelf"] = {"dailyChars": {"default": 100000, "fish": sc["chars"]}}       # 把额度设成刚好读完
+        r = self.rpc(h, "tools/call", {"name": "shelf_read", "arguments": {"book": "短书", "restart": True}})["result"]
+        self.assertTrue(r["structuredContent"]["limitReached"])                    # 额度用完
+        self.assertIn("明天", r["content"][0]["text"])
+        r = self.rpc(h, "tools/call", {"name": "shelf_bookmark", "arguments": {"book": "短书", "note": "好"}})["result"]
+        self.assertEqual(r["structuredContent"]["note"], "好")
+        text, err = self.text(h, "shelf_status", book="短书", status="want")
+        self.assertIn("想读", text)
+        self.assertIn("（想读）", self.text(h, "shelf_list")[0])
+        self.assertIn("没改成", self.text(h, "shelf_status", book="短书", status="bogus")[0])
 
     def test_read_together_shares_progress(self):
         d = Path(tempfile.mkdtemp(prefix="dlolib-mcp2-"))
