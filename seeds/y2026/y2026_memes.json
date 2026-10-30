@@ -383,6 +383,63 @@
         "https://news.ifeng.com/c/8uwbWK80lDB",
         "https://tidenews.com.cn/news.html?id=3507085"
       ]
+    },
+    {
+      "name": "咕咕嘎嘎",
+      "aliases": ["小咕嘎", "企鹅女管"],
+      "topic": "二次元与游戏",
+      "type": "拟声词",
+      "brief": "模仿婴儿咿呀声的拟声词，配上《明日方舟：终末地》女管理员 AI 二创的小企鹅，魔性洗脑",
+      "meaning": "没有深意，主打魔性上头、装嫩发疯。网友用 AI 做出企鹅上班摸鱼、摆摊、蹲墙角求收养之类的小剧场，也有人自称「云养女儿」。",
+      "origin": "「咕咕嘎嘎」作为拟声梗 2025 年初已在 B 站出圈；2026 年 1 月《终末地》上线后，2 月 19 日有 B 站 UP 主用 AI 把女管理员画成 Q 版企鹅，一两个月内扩散到抖音、小红书。走红后有人想申请著作权、向周边商家收分成，被网友批评后道歉放弃。",
+      "era": "2026年2月起",
+      "status": "active",
+      "confidence": "multi",
+      "sources": [
+        "https://news.17173.com/content/10022026/000029966.shtml",
+        "https://news.17173.com/content/03172026/125324390.shtml",
+        "https://www.woshipm.com/operate/6374782.html"
+      ]
+    },
+    {
+      "name": "你只是怕了",
+      "aliases": ["早已知晓一切的我，你只是怕了", "根本没有这种东西"],
+      "topic": "短视频与表情包",
+      "type": "接龙梗",
+      "brief": "对方嘴硬否认「根本没有这种东西」时的万能回怼，下面一般接「这谁不怕」",
+      "prev": "根本没有这样的东西！",
+      "next": "你只是怕了！这谁不怕！",
+      "meaning": "有人看到吓人、离谱的图或视频，立刻嘴硬说「根本没有这种东西」，另一人就用「你只是怕了」把这份否认拆穿，评论区再接「这谁不怕」，把害怕光明正大认下来。后来不再限于吓人的东西，辩论、游戏、段子的评论区里到处套用，变成了「别嘴硬，你就是怕」的通用回复。注意：这个梗和咒术回战没有查到直接关系。",
+      "origin": "2026 年 8 月起有梗百科类视频专门讲它，单条播放超六十万；视频弹幕里有人提到相关图片多出自「美国山海经」一类的怪物图，这一点没能核实，最早的出处也没查到。10 月又有多条视频套用，其中也有人把这句话配在动画《FX战士久留美》的炒股桥段上（该动画 10 月 1 日开播）。",
+      "era": "2026年8月起，10月最热",
+      "status": "active",
+      "confidence": "single",
+      "sources": [
+        "https://www.bilibili.com/video/BV1Pfhw68Efh/",
+        "https://www.bilibili.com/video/BV1Cpxj6QEKr/",
+        "https://www.bilibili.com/video/BV1wLxY6aETr/",
+        "https://www.bilibili.com/video/BV1nunE6rEQD/"
+      ]
+    },
+    {
+      "name": "这谁不怕",
+      "aliases": ["这谁不怕？"],
+      "topic": "短视频与表情包",
+      "type": "接龙梗",
+      "brief": "「你只是怕了」的下一句：不辩解，直接承认「怕」，还问你谁不怕",
+      "prev": "你只是怕了",
+      "next": "这谁不怕",
+      "meaning": "被人说「你只是怕了」的时候，不逞强，反问一句「这谁不怕」，把对方的嘲讽变成大家的共同感受。也可以单独当作看到吓人 / 离谱画面时的感叹。",
+      "origin": "和「你只是怕了」一起在 2026 年 8 月起的评论区里流行，10 月许多以它为标题的视频播放量达到几十万到近一百万，包括配音、搞怪短片和游戏实况。出处同上，没查到更早的来源。",
+      "era": "2026年8月起，10月最热",
+      "status": "active",
+      "confidence": "single",
+      "sources": [
+        "https://www.bilibili.com/video/BV1kinW6tEe5/",
+        "https://www.bilibili.com/video/BV1wuJv6XEtv/",
+        "https://www.bilibili.com/video/BV1Pfhw68Efh/",
+        "https://www.bilibili.com/video/BV1wLxY6aETr/"
+      ]
     }
   ],
   "alsoReFired": [

@@ -31,28 +31,31 @@ def load(path=None) -> dict:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def _refs(urls: list) -> list:
-    return [{"kind": REF_KIND, "year": 2026, "url": u} for u in urls]
+def _refs(urls: list, year: int = 2026, kind: str = REF_KIND) -> list:
+    return [{"kind": kind, "year": year, "url": u} for u in urls]
 
 
-def run(book, path=None) -> dict:
-    data = load(path)
+def run_seed(book, data: dict, *, dataset: str = DATASET, license: str = LICENSE,
+             ref_kind: str = REF_KIND, default_year: int = 2026) -> dict:
+    """按「梗 seed」的格式导入。2026 盘点和 jjk 等主题 seed 共用；每个 seed 自己的 dataset 名，互不冲掉。
+    条目可以带自己的 year（没有就用 default_year），alsoReFired 里的 ref 同理。"""
     at = data.get("retrieved", "2026-10-30") + "T00:00:00Z"
-    book.import_entries([], DATASET)               # 先清掉上一次导进来的（没被人改过的），重跑不会多也不会少
+    book.import_entries([], dataset)               # 先清掉上一次导进来的（没被人改过的），重跑不会多也不会少
     new_entries = []                                # 名字或别名撞上别的来源的，import_entries 会跳过并记在 skipped 里
     for t in data["terms"]:
-        src = {"kind": "seed", "by": "import", "dataset": DATASET, "license": LICENSE,
-               "url": (t.get("sources") or [""])[0], "year": 2026}
+        year = t.get("year", default_year)
+        src = {"kind": "seed", "by": "import", "dataset": dataset, "license": license,
+               "url": (t.get("sources") or [""])[0], "year": year}
         e = book.build_entry(
             name=t["name"], aliases=t.get("aliases", []), brief=t["brief"], source=src, at=at,
             meaning=t.get("meaning", ""), origin=t.get("origin", ""), era=t.get("era", ""),
             type=t.get("type", ""), flags=t.get("flags", {}), status=t.get("status"),
-            refs=_refs(t.get("sources", [])))
+            refs=_refs(t.get("sources", []), year, ref_kind))
         for k in ("prev", "next", "topic", "confidence"):
             if t.get(k):
                 e[k] = t[k]
         new_entries.append(e)
-    res = book.import_entries(new_entries, DATASET)
+    res = book.import_entries(new_entries, dataset)
 
     refreshed, missing = 0, []
     for r in data.get("alsoReFired", []):
@@ -60,10 +63,14 @@ def run(book, path=None) -> dict:
         if not e:
             missing.append(r["name"])
             continue
-        keep = [x for x in e.get("refs", []) if x.get("kind") != REF_KIND]
-        add = [{"kind": REF_KIND, "year": r.get("year", 2026), "note": r.get("note", ""), "url": u}
+        keep = [x for x in e.get("refs", []) if x.get("kind") != ref_kind]
+        add = [{"kind": ref_kind, "year": r.get("year", default_year), "note": r.get("note", ""), "url": u}
                for u in r.get("sources", [])]
         out = book.update(e["id"], {"refs": keep + add}, "import")
         refreshed += 1 if out["ok"] else 0
     return {"ok": True, "terms": len(data["terms"]), "created": res["added"], "skipped": res["skipped"],
             "alsoReFired": refreshed, "alsoReFiredMissing": missing, "generatedAt": now_iso()}
+
+
+def run(book, path=None) -> dict:
+    return run_seed(book, load(path))

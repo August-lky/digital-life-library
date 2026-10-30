@@ -75,6 +75,17 @@ class Y2026Tests(unittest.TestCase):
         e = self.book.find_by_name("爱你老己")
         self.assertEqual(sum(1 for r in e["refs"] if r.get("kind") == "y2026"), 2)   # 重导入不会越堆越多
 
+    def test_guguga_and_fear_chain(self):
+        e = self.book.find_by_name("咕咕嘎嘎")
+        self.assertTrue(e and e["source"]["dataset"] == "2026年盘点")
+        a = self.book.find_by_name("你只是怕了")
+        b = self.book.find_by_name("这谁不怕")
+        self.assertEqual(a["type"], "接龙梗")
+        self.assertEqual(a["next"], "你只是怕了！这谁不怕！")
+        self.assertEqual(b["prev"], "你只是怕了")
+        self.assertEqual(b["next"], "这谁不怕")
+        self.assertIn("没有查到直接关系", a["meaning"])
+
     def test_no_politics_or_lyrics_markers(self):
         text = json.dumps(self.data, ensure_ascii=False)
         for word in ("命运共同体", "不忘初心", "新质生产力", "歌词："):

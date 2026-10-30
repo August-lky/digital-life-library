@@ -6,4 +6,4 @@ from pathlib import Path
 
 SEEDS_DIR = Path(__file__).resolve().parents[2] / "seeds"
 
-IMPORTERS = ("chime", "wikipedia", "yearly", "y2026")
+IMPORTERS = ("chime", "wikipedia", "yearly", "y2026", "jjk")
