@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.lock
+*.tmp
+.index/
+# 读维基页面时的原文缓存（只放本机，仓库里只放自己写的释义）
+seeds/wikipedia/.cache/
+# 私有词表、令牌、本机的图书馆目录：只放本机，永远不进仓库
+*.local.txt
+private-words*
+server.token
+library.config.json
+data/
+# 书架里的书（没有版权的书不进仓库）
+shelf/
+dist/
+build/
+*.egg-info/

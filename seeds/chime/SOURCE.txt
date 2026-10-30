@@ -1,0 +1,10 @@
+CHIME: CHinese Internet Meme Explanation Dataset
+仓库   https://github.com/yuboxie/chime
+文件   data/chime_full.json（1458 条）
+版本   commit 865ef186a0e797ec5ac242524a3c45b30a429542（2026-10-30 取）
+sha256 dc438bcb0083918bb074fdbf8dbe275ce355b62cffe96f13a48f8b2fc51de3ec
+许可   MIT（见同目录 LICENSE），Copyright (c) 2025 Yubo Xie
+论文   Xie et al., "Are Large Language Models Chronically Online Surfers? A Dataset for Chinese Internet Meme Explanation", EMNLP 2025
+       https://aclanthology.org/2025.emnlp-main.863/
+素材   README 致谢：原始素材由「梗百科」提供，作者做了标注（profanity / offense / 类型）。
+注意   README 写着「intended for research purposes only」（是作者的请求，不是许可条款；许可以 MIT 为准）。2026-10-30 老大决定：公开版带全部 1458 条，附本目录的 LICENSE 并署名；冒犯 / 脏字只打标记不隐藏。详见上层 DATA_LICENSES.md。

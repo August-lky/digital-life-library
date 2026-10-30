@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "digital-life-library"
+version = "0.1.0"
+description = "Digital Life's Own Library - a small local library (reference books + a bookshelf) that AI companions can look things up in. 数字生命自己的图书馆。"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "August-lky" }]
+keywords = ["ai", "mcp", "chinese", "memes", "knowledge-base", "reference-book"]
+dependencies = []   # 核心只用标准库
+
+[project.optional-dependencies]
+# 谐音匹配（「尊嘟假嘟 ~ 真的假的」）：pypinyin，MIT。不装也能用，只是少了读音这一路。
+pinyin = ["pypinyin>=0.50"]
+# 按意思找（兜底，分数压得很低）：fastembed + numpy。不装、或本机没有模型缓存就自动跳过。
+semantic = ["fastembed>=0.3", "numpy>=1.24"]
+all = ["pypinyin>=0.50", "fastembed>=0.3", "numpy>=1.24"]
+
+[project.scripts]
+dlolib = "dlolib.cli:main"
+
+[tool.setuptools]
+packages = ["dlolib", "dlolib.importers"]
+
+[tool.setuptools.package-data]
+dlolib = ["web/*.html"]
