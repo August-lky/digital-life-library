@@ -75,4 +75,4 @@ def run(book, path=None) -> dict:
     res = book.import_entries(new_entries, DATASET)
     created = res["added"]
     return {"ok": True, "lists": len(data["lists"]), "distinctTerms": len(terms), "updatedExisting": updated,
-            "created": created, "skipped": res["skipped"], "listedOnly": listed_only, "generatedAt": now_iso()}
+            "created": created, "skipped": res["skipped"], "rejected": res["rejected"], "listedOnly": listed_only, "generatedAt": now_iso()}

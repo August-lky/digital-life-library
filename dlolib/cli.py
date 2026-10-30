@@ -300,6 +300,8 @@ def _cmd_import(a, lib, book):
     res = _run_import(book, a)
     if isinstance(res.get("skipped"), list):
         res["skipped"] = f"{len(res['skipped'])} 条（名字撞上别的条目）"
+    if res.get("rejected"):
+        res["rejected"] = [f"{r['name']}：{r['reason']}" for r in res["rejected"]]
     return _emit(a, res)
 
 

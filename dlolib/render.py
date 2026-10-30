@@ -47,6 +47,11 @@ def render_entry(lib, e: dict, score=None, why: str = "") -> str:
     lines = [f"{head}：{e.get('brief') or e.get('meaning')}"]
     if e.get("aliases"):
         lines.append(f"  也写作：{'、'.join(e['aliases'])}")
+    if e.get("next"):
+        lines.append(f"  接龙：{e.get('prev') or e['name']} → {e['next']}")
+    ly = e.get("lyric")
+    if isinstance(ly, dict) and ly.get("song"):
+        lines.append(f"  这句是歌词：{ly.get('artist', '')}《{ly['song']}》里的，因为成了梗才收；只收这一两句")
     if e.get("origin"):
         lines.append(f"  出处：{clip(e['origin'], 90)}")
     if e.get("examples"):

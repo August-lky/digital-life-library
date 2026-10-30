@@ -43,7 +43,7 @@ for hit in book.search("尊嘟假嘟"):
 
 一本书 = `<home>/books/<id>/entries.jsonl`，一行一条。书架的登记在 `<home>/books.json`，想加新书就加一行、建一个目录。
 
-条目字段：`id, name, aliases[], brief（≤80 字，用自己的话写的短释义）, meaning, origin, examples[≤3], type, era, status(active/fading/dated/unknown), heat, hidden, flags{profanity, offense}, passive, refs[], source{...}, createdAt, updatedAt, history[≤20]`。
+条目字段：`id, name, aliases[], brief（≤80 字，用自己的话写的短释义）, meaning, origin, examples[≤3], type, era, status(active/fading/dated/unknown), heat, hidden, flags{profanity, offense}, passive, refs[], source{...}, createdAt, updatedAt, history[≤20]`。接龙梗和歌词梗另有 `prev`（上句）/ `next`（下句），歌词梗还有 `lyric`{id, song, artist, year}（指向歌词白名单里的那首歌）。
 
 **每条都写明从哪来**，`source.kind` 有四类：
 
@@ -67,6 +67,17 @@ for hit in book.search("尊嘟假嘟"):
 **被动提示** `scan()`：一句话里出现了书里的梗名就挑出来。只认三个字以上或带字母的梗名，过时、隐藏、冒犯的不提示，每条消息最多两个。**整座图书馆默认关**，要不要开由接入方决定。
 
 冒犯 / 带脏字的条目**只打标记，不隐藏**：查到时会提醒「看场合」。
+
+### 歌词：不收，白名单里的歌词梗例外
+
+仓库不收歌词（版权）。但有的歌词**这句话本身成了梗**，比如杨丞琳《雨爱》的「听雨的声音 → 一滴滴清晰」（因为咒术回战新宿决战的剪辑火起来，看到上句大家会接下句），不收就查不到。所以有一份很窄的白名单 `seeds/lyric_memes_whitelist.json`：
+
+- 每首歌一条，记：歌名、演唱者、年份、成梗的上句 `prev` / 下句 `next`、为什么成梗 `why`、和哪类剪辑 / 事件绑在一起 `boundTo`、走红时间 `popularSince`、依据链接 `sources`；
+- **最多两句（上句 + 下句），每句不超过 20 个字，不收第三句、不收整段**；可以再登记至多 3 个记混的变体（如「一点点清晰」），也不超过 20 字，且和原句只差一两个字；
+- 条目 `type` 是「歌词梗」（或名字正好是白名单里的句子）时，`name` / `aliases` / `prev` / `next` 只能是白名单里这首歌的句子，别的歌词句子一律拒收；
+- 校验在写入 / 导入这一层（`dlolib/lyrics.py`，由 `store.py` 的 `add` / `update` / `import_entries` 调用），命令行、MCP、HTTP、导入脚本都绕不过，数字限制写在代码里；
+- 其他条目的出处 / 例句 / 详细解释里，也不能抄大段歌词（引一句、20 字以内没关系）：`library_save` 存的时候抄了大段歌词，那一部分不存，其余照存，并给一句提示；名字 / 意思里就是大段歌词的，整条不存。
+- 想登记新歌：先确认是「这句话本身成了梗」，写清依据链接，往白名单里加一条（加完跑测试）。不要从歌词网站批量抓。
 
 ### 可选：谐音匹配
 
@@ -153,10 +164,11 @@ python -m dlolib scan-tree ./digital-life-library --private-words ./my-private-w
 ## 目录
 
 ```
-dlolib/            核心（store, shelf, render, phonetic, cli, server, mcp_server, export, importers/, web/admin.html）
+dlolib/            核心（store, lyrics, shelf, render, phonetic, cli, server, mcp_server, export, importers/, web/admin.html）
 seeds/chime/       CHIME 原文件 + LICENSE（MIT）
 seeds/wikipedia/   词条名 + 自己写的释义（CC BY-SA 4.0）
 seeds/yearly/      年度榜单（CC0-1.0）
+seeds/lyric_memes_whitelist.json   歌词梗白名单（见上面「歌词」一节）
 tests/             python -X utf8 -m unittest discover -s tests
 DATA_LICENSES.md   每份数据的来源、许可、署名、改动
 ```

@@ -3,9 +3,10 @@
 
 和年度榜单一样：梗名、时间、来龙去脉是事实；释义和出处说明全部是本项目自己写的（seeds/y2026/y2026_memes.json），
 所以这份数据按 CC0-1.0 发布。每条的 sources 是写这一条所依据的报道链接，会变成条目的 refs。
-政治、时政类、涉及真实普通人隐私的、侮辱特定群体的不收；歌词不收。
+政治、时政类、涉及真实普通人隐私的、侮辱特定群体的不收；歌词不收（成了梗的一两句、登记在歌词白名单里的除外，见 lyrics.py）。
 
-接龙类（上句 → 下句）多两个字段：prev（上句）、next（下句），type 是「接龙梗」。
+接龙类（上句 → 下句）多两个字段：prev（上句）、next（下句），type 是「接龙梗」；
+接龙的上下句如果是歌词，type 是「歌词梗」，lyric 写白名单里的歌曲 id，导入时由 store 层校验。
 
 导入时：
   1. 书里还没有的梗：新增一条，来源 dataset=2026年盘点，license=CC0-1.0，by=import；
@@ -46,12 +47,15 @@ def run_seed(book, data: dict, *, dataset: str = DATASET, license: str = LICENSE
         year = t.get("year", default_year)
         src = {"kind": "seed", "by": "import", "dataset": dataset, "license": license,
                "url": (t.get("sources") or [""])[0], "year": year}
+        if t.get("maintainer"):
+            src["note"] = t["maintainer"]            # 老大 / 维护者口头补充的（没有链接可附）
         e = book.build_entry(
             name=t["name"], aliases=t.get("aliases", []), brief=t["brief"], source=src, at=at,
             meaning=t.get("meaning", ""), origin=t.get("origin", ""), era=t.get("era", ""),
             type=t.get("type", ""), flags=t.get("flags", {}), status=t.get("status"),
-            refs=_refs(t.get("sources", []), year, ref_kind))
-        for k in ("prev", "next", "topic", "confidence"):
+            refs=_refs(t.get("sources", []), year, ref_kind)
+            + ([{"kind": ref_kind, "year": year, "note": t["maintainer"]}] if t.get("maintainer") else []))
+        for k in ("prev", "next", "topic", "confidence", "lyric"):
             if t.get(k):
                 e[k] = t[k]
         new_entries.append(e)
@@ -69,7 +73,7 @@ def run_seed(book, data: dict, *, dataset: str = DATASET, license: str = LICENSE
         out = book.update(e["id"], {"refs": keep + add}, "import")
         refreshed += 1 if out["ok"] else 0
     return {"ok": True, "terms": len(data["terms"]), "created": res["added"], "skipped": res["skipped"],
-            "alsoReFired": refreshed, "alsoReFiredMissing": missing, "generatedAt": now_iso()}
+            "rejected": res["rejected"], "alsoReFired": refreshed, "alsoReFiredMissing": missing, "generatedAt": now_iso()}
 
 
 def run(book, path=None) -> dict:

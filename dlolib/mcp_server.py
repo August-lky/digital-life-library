@@ -26,7 +26,7 @@ TOOLS = [
         "name": "library_lookup",
         "description": "在图书馆的工具书里查一个梗、一句话或半句话（比如别人说的一句你没听懂的网络用语）。"
                        "可以只给半句，写错一两个字也找得到。找不到的话，可以去搜一下，弄懂了再用 library_save 存一句进来。"
-                       "歌词不收，歌词可以另外查。",
+                       "歌词不收（只有已经成了梗的一两句例外），歌词可以另外查。",
         "inputSchema": {"type": "object", "properties": {
             "query": {"type": "string", "description": "想查的词或句子"},
             "k": {"type": "integer", "description": "最多给几条，默认 3"}}, "required": ["query"]},
@@ -35,7 +35,7 @@ TOOLS = [
         "name": "library_save",
         "description": "把你弄懂的一个梗用自己的话存进图书馆，下次就能直接查到。要写：梗的名字、一句话意思（80 字以内，用自己的话），"
                        "以及在哪碰到的（where，比如哪个群、哪个视频）；如果是自己去搜到的，可以附上网址（url）。"
-                       "不要存别人的号码、手机号、邮箱这类个人信息。已经有的梗不会重复存。",
+                       "不要存别人的号码、手机号、邮箱这类个人信息，也不用抄整段歌词（歌词不收，抄了的那部分不会存）。已经有的梗不会重复存。",
         "inputSchema": {"type": "object", "properties": {
             "name": {"type": "string"}, "brief": {"type": "string", "description": "一句话意思，80 字以内，用自己的话"},
             "where": {"type": "string", "description": "在哪碰到的"}, "url": {"type": "string", "description": "查到的网址（可选）"},
@@ -111,7 +111,8 @@ class Handler:
                                  aliases=args.get("aliases"), origin=str(args.get("origin", "")),
                                  refs=[{"url": args["url"]}] if args.get("url") else [])
             if res["ok"]:
-                return f"存好了：「{res['entry']['name']}」。下次可以直接查到。"
+                note = f"（{res['note']}）" if res.get("note") else ""
+                return f"存好了：「{res['entry']['name']}」。下次可以直接查到。{note}"
             return "没存成：" + res["error"]
         if name == "library_mark":
             res = lib.book().mark(str(args.get("id", "")), who, status=args.get("status"), hidden=args.get("hidden"))

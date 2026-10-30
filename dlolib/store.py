@@ -30,7 +30,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import phonetic
+from . import lyrics, phonetic
 
 SOURCE_KINDS = ("seed", "asked", "self", "owner")
 DEFAULT_LABELS = {"seed": "打底", "asked": "{owner}让搜的", "self": "自己学的", "owner": "{owner}手填"}
@@ -44,7 +44,7 @@ HISTORY_MAX = 20
 DEFAULT_BOOKS = {
     "books": [{
         "id": "memes", "title": "中文互联网热梗", "dir": "books/memes", "kind": "reference",
-        "about": "网络流行语、梗、谐音、缩写、名场面台词。歌词不收。",
+        "about": "网络流行语、梗、谐音、缩写、名场面台词。歌词不收（已经成了梗的一两句，登记在歌词白名单里的除外）。",
         "passiveDefault": False,
     }]
 }
@@ -95,6 +95,41 @@ def make_id(book_id: str, name: str) -> str:
 
 def has_private(obj) -> bool:
     return bool(PRIVATE_RE.search(json.dumps(obj, ensure_ascii=False)))
+
+
+# 条目里的这些文字字段不能抄进大段歌词（歌词梗的白名单规则见 lyrics.py）。
+# 可以丢掉的（出处、来历、例句）丢掉那一部分再存；丢不掉的（名字、意思）整条不存。
+LYRIC_DROPPABLE = {"origin": "出处", "meaning": "详细解释", "examples": "例句"}
+LYRIC_REQUIRED = {"name": "名字", "brief": "意思", "aliases": "别名"}
+
+
+def scrub_lyrics(fields: dict, wl=None) -> tuple:
+    """fields 是要写进条目的文字字段。返回 (干净的 fields, 被动过的字段名列表, 错误信息)。
+    出处 / 详细解释里的大段歌词被拿掉（整段是歌词的变成空串，夹在话里的换成「（歌词略）」），例句里整句是歌词的拿掉；
+    错误信息非空 = 名字 / 意思 / 别名里就有，这条不能存。"""
+    wl = wl or lyrics.load()
+    clean, dropped = dict(fields), []
+    for k, label in LYRIC_REQUIRED.items():
+        v = fields.get(k)
+        vals = v if isinstance(v, (list, tuple)) else [v]
+        if any(lyrics.looks_like_lyrics(x, wl) for x in vals if isinstance(x, str)):
+            return clean, dropped, f"{label}里像是抄了一大段歌词。{lyrics.DUMP_NOTE}"
+    for k in LYRIC_DROPPABLE:
+        v = fields.get(k)
+        if isinstance(v, (list, tuple)):
+            rows = [lyrics.redact(x, wl) if isinstance(x, str) else (x, False) for x in v]
+            if any(ch for _, ch in rows):
+                clean[k], dropped = [x for x, _ in rows if x], dropped + [k]
+        elif isinstance(v, str):
+            out, ch = lyrics.redact(v, wl)
+            if ch:
+                clean[k], dropped = out, dropped + [k]
+    return clean, dropped, ""
+
+
+def lyric_note(dropped_keys: list) -> str:
+    names = "、".join(LYRIC_DROPPABLE[k] for k in dropped_keys)
+    return f"{names}里像是抄了一大段歌词。歌词不收（已经成了梗的那一两句除外），那部分没存，其余的存好了～"
 
 
 @contextmanager
@@ -463,6 +498,11 @@ class Book:
         if has_private([name, brief, origin, examples, aliases, meaning, source]):
             return {"ok": False, "error": "里面像是有号码、手机号或邮箱，这种个人信息不收"}
         aliases = [str(a).strip() for a in (aliases or []) if str(a).strip()]
+        clean, dropped, err = scrub_lyrics({"name": name, "brief": brief, "aliases": aliases, "origin": origin or "",
+                                            "meaning": meaning or "", "examples": list(examples or [])})
+        if err:
+            return {"ok": False, "error": err}
+        origin, meaning, examples = clean["origin"], clean["meaning"], clean["examples"]
         with locked(self.file):
             self.maybe_reload()
             for n in [name, *aliases]:
@@ -472,9 +512,15 @@ class Book:
             entry = self.build_entry(name=name, brief=brief, source=source, aliases=aliases, origin=origin,
                                      examples=examples, era=era, refs=refs, flags=flags, meaning=meaning,
                                      type=type)
+            err = lyrics.apply(entry)           # 歌词梗：只收白名单里的句子；会补全 type / lyric / prev / next
+            if err:
+                return {"ok": False, "error": err}
             self.entries.append(entry)
             self._save()
-            return {"ok": True, "entry": entry}
+            res = {"ok": True, "entry": entry}
+            if dropped:
+                res["dropped"], res["note"] = dropped, lyric_note(dropped)
+            return res
 
     def import_entries(self, entries: list, dataset: str) -> dict:
         """批量导入一个数据集的打底条目（一次拿锁、一次写盘）。
@@ -500,10 +546,17 @@ class Book:
             for e in keep:
                 for n in [e["name"], *e.get("aliases", [])]:
                     taken[norm(n)] = e["name"]
-            added, skipped = [], []
+            added, skipped, rejected, trimmed = [], [], [], []
+            wl = lyrics.load()
             for e in entries:
                 if e["id"] in edited:
                     continue
+                err, dropped = self._import_check(e, wl)
+                if err:
+                    rejected.append({"name": e["name"], "reason": err})
+                    continue
+                if dropped:
+                    trimmed.append({"name": e["name"], "fields": dropped})
                 names = [e["name"], *e.get("aliases", [])]
                 clash = next((taken[norm(n)] for n in names if norm(n) in taken), None)
                 if clash:
@@ -515,7 +568,21 @@ class Book:
             self.entries = keep + added
             self._save()
             return {"ok": True, "added": len(added), "replaced": replaced, "keptEdited": len(edited),
-                    "skipped": skipped}
+                    "skipped": skipped, "rejected": rejected, "trimmed": trimmed}
+
+    @staticmethod
+    def _import_check(e: dict, wl) -> tuple:
+        """导入也过歌词这一关。返回 (错误, 被拿掉歌词的字段名)：歌词梗要在白名单里，名字 / 意思 / 别名里有大段歌词的整条不收；
+        出处、详细解释、例句里的大段歌词拿掉那一部分，其余照收。"""
+        err = lyrics.apply(e, wl)
+        if err:
+            return err, []
+        clean, dropped, err = scrub_lyrics({k: e.get(k) for k in (*LYRIC_REQUIRED, *LYRIC_DROPPABLE)}, wl)
+        if err:
+            return err, []
+        for k in dropped:
+            e[k] = clean[k]
+        return "", dropped
 
     def update(self, entry_id: str, fields: dict, by: str) -> dict:
         bad = set(fields) - EDITABLE
@@ -529,6 +596,10 @@ class Book:
             return {"ok": False, "error": f"名字不能空，{NAME_MAX} 字以内"}
         if has_private(fields):
             return {"ok": False, "error": "里面像是有号码、手机号或邮箱，这种个人信息不收"}
+        fields, dropped, err = scrub_lyrics(fields)
+        if err:
+            return {"ok": False, "error": err}
+        fields = {k: v for k, v in fields.items() if not (k in dropped and not v)}   # 整段都是歌词的字段：这次不改它
         with locked(self.file):
             self.maybe_reload()
             e = self.get(entry_id)
@@ -536,7 +607,17 @@ class Book:
                 return {"ok": False, "error": f"没有这一条：{entry_id}"}
             changed = {k: v for k, v in fields.items() if e.get(k) != v}
             if not changed:
-                return {"ok": True, "entry": e, "note": "没有变化"}
+                return {"ok": True, "entry": e, "note": lyric_note(dropped) if dropped else "没有变化"}
+            if changed.keys() & {"name", "aliases", "type", "flags"}:      # 歌词梗改完还得是白名单里的句子
+                merged = {**e, **changed}
+                err = lyrics.apply(merged)
+                if err:
+                    return {"ok": False, "error": err}
+                if "type" in changed and changed["type"] != merged["type"]:
+                    return {"ok": False, "error": "这是歌词梗，类型不能改成别的"}
+                for k in ("type", "lyric", "prev", "next", "aliases"):          # 改名后正好成了白名单里的句子：补上歌词梗的标记
+                    if merged.get(k) != e.get(k):
+                        changed[k] = merged[k]
             if "name" in changed or "aliases" in changed:
                 for n in [changed.get("name", e["name"]), *changed.get("aliases", e.get("aliases", []))]:
                     dup = self.find_by_name(n)
@@ -552,7 +633,7 @@ class Book:
                                                 "before": before})
             e["history"] = e["history"][-HISTORY_MAX:]
             self._save()
-            return {"ok": True, "entry": e}
+            return {"ok": True, "entry": e, **({"dropped": dropped, "note": lyric_note(dropped)} if dropped else {})}
 
     def mark(self, entry_id: str, by: str, status=None, hidden=None) -> dict:
         f = {}
