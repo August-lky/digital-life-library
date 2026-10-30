@@ -9,7 +9,8 @@
 
 书架管理（谁有权限由接入程序管，核心只提供动作）：改书名 / 作者 / 来源 / 许可说明 / 分类（edit）、挪位置（move）、
 拿走（remove）和还原（restore）。拿走不是真删：书的记录（连同进度、书签）存进 <home>/shelf/trash.json，
-正文挪进 <home>/shelf/trash/，想找回来 restore 一下就回到原来的样子。
+正文挪进 <home>/shelf/trash/，想找回来 restore 一下就回到原来的样子。回收站不是永远留着：接入程序可以定期调
+purge_trash(days)，把待满 days 天的真正删掉（默认 30 天）。
 """
 from __future__ import annotations
 
@@ -287,6 +288,38 @@ class Shelf:
             self._trash_save(trash)
             src.unlink()
             return {"ok": True, "book": back["title"], "id": back["id"]}
+
+    def purge_trash(self, days: int = 30) -> dict:
+        """真正删掉在回收站里待满 days 天的书（记录和正文都删）。只返回数量，不带书名。
+
+        removedAt 读不懂的不动（宁可多留）。先改记录再删正文：中途出事，最多留下一个没人认的文件，不会丢还在回收站里的书。
+        接入程序可以每天调一次，给回收站一个期限（默认 30 天）。"""
+        try:
+            days = int(days)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "days 要写整数"}
+        if days < 1:
+            return {"ok": False, "error": "days 至少 1 天"}
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        with locked(self.file):
+            trash = self._trash_load()
+            gone, keep = [], []
+            for b in trash["books"]:
+                try:
+                    at = datetime.strptime(str(b.get("removedAt", "")), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                except ValueError:
+                    at = None
+                (gone if at is not None and at < cutoff else keep).append(b)
+            if not gone:
+                return {"ok": True, "purged": 0, "kept": len(keep)}
+            trash["books"] = keep
+            self._trash_save(trash)
+            for b in gone:
+                try:
+                    (self.dir / "trash" / f"{b['id']}.txt").unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return {"ok": True, "purged": len(gone), "kept": len(keep)}
 
     def set_status(self, book: str, reader: str, status: str) -> dict:
         if status not in READ_STATUS:

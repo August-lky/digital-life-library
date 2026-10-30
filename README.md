@@ -104,7 +104,7 @@ python -m dlolib --home ./my-library shelf list
 - 支持 `.txt`（UTF-8 / GB18030）、`.md`、`.epub`、`.html`。
 - 「读者」是任意字符串；几个人一起读就用同一个读者名，进度共用。可以在 `library.config.json` 里设每人每天最多读多少字（`shelf.dailyChars`）。
 - 导入时可以带上来源网址（`--url`）、许可说明（`--license-note`）和分类（`--category`）。
-- **书架管理**：`shelf edit`（书名 / 作者 / 来源 / 许可说明 / 分类，书的 id 不变，进度书签跟着）、`shelf move`（换分类、挪位置：名次或 top / bottom）、`shelf remove`（拿下书架）、`shelf restore`、`shelf trash`。拿下书架**不是真删**：记录（连同进度、书签）进 `shelf/trash.json`，正文挪进 `shelf/trash/`，`restore` 原样放回；回收站里的阅读字数仍算在当天的每日额度里。核心只提供这些动作，**谁有权限用，由接入程序决定**（MCP 里没有这些工具）。
+- **书架管理**：`shelf edit`（书名 / 作者 / 来源 / 许可说明 / 分类，书的 id 不变，进度书签跟着）、`shelf move`（换分类、挪位置：名次或 top / bottom）、`shelf remove`（拿下书架）、`shelf restore`、`shelf trash`。拿下书架**不是真删**：记录（连同进度、书签）进 `shelf/trash.json`，正文挪进 `shelf/trash/`，`restore` 原样放回；回收站里的阅读字数仍算在当天的每日额度里。回收站有期限：`shelf purge-trash --days 30`（接入程序每天调一次）把待满 30 天的真正删掉，输出只有数量。核心只提供这些动作，**谁有权限用，由接入程序决定**（MCP 里没有这些工具）。
 - 核心不联网取书；想从网上取公版书，由接入程序自己取回文本、写成临时文件，再用 `shelf add` 导入。
 
 ## 逛一逛

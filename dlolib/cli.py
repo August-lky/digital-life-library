@@ -10,7 +10,7 @@
   fetch-wikipedia             联网读维基「中国大陆网络用语列表」（慢速、只读、2 个请求），原文只存本机缓存
   build-wikipedia-seed        用缓存里的词条名 + briefs.json 里自己写的释义，生成 wikipedia_netslang.json
   shelf ...                   书架：add / list / read / status / bookmark / bookmarks / log，
-                              管理：edit（改书名等）/ move（分类、位置）/ remove（进回收站）/ restore / trash
+                              管理：edit（改书名等）/ move（分类、位置）/ remove（进回收站）/ restore / trash / purge-trash（真删待满 N 天的）
   browse                      逛一逛工具书：--mode topic|source|recent|random
   serve                       HTTP 接口 + 管理页（127.0.0.1:3212）
   mcp --agent <id>            stdio MCP 服务，--agent 固定「谁存的」
@@ -157,6 +157,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = ssub.add_parser("restore")
     s.add_argument("book")
     ssub.add_parser("trash")
+    s = ssub.add_parser("purge-trash", help="真删回收站里待满 N 天的书")
+    s.add_argument("--days", type=int, default=30)
 
     p = sub.add_parser("browse")
     p.add_argument("--mode", default="recent", choices=BROWSE_MODES)
@@ -221,6 +223,8 @@ def _run_shelf(lib, a):
         return shelf.restore(a.book)
     if c == "trash":
         return shelf.trash()
+    if c == "purge-trash":
+        return shelf.purge_trash(a.days)
     if c == "read":
         return shelf.read(a.book, a.reader, chars=a.chars, restart=a.restart)
     if c == "status":

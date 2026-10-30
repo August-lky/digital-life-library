@@ -672,6 +672,35 @@ class ShelfTests(Base):
         with self.assertRaises(KeyError):
             self.shelf.remove("没有这本", "sister")
 
+    def test_purge_trash_deletes_only_books_past_the_deadline(self):
+        from datetime import datetime, timedelta, timezone
+        self._two_books()
+        self.shelf.remove("小书", "sister")
+        self.shelf.remove("另一本", "sister")
+        trash = self.shelf._trash_load()
+        stamp = lambda days: (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        old = next(b for b in trash["books"] if b["title"] == "小书")
+        young = next(b for b in trash["books"] if b["title"] == "另一本")
+        old["removedAt"], young["removedAt"] = stamp(31), stamp(29)
+        self.shelf._trash_save(trash)
+        r = self.shelf.purge_trash(30)
+        self.assertEqual(r, {"ok": True, "purged": 1, "kept": 1})                 # 只有数量，没有书名
+        self.assertEqual([t["title"] for t in self.shelf.trash()], ["另一本"])
+        self.assertFalse((self.shelf.dir / "trash" / f"{old['id']}.txt").exists())   # 记录和正文都真删了
+        self.assertTrue((self.shelf.dir / "trash" / f"{young['id']}.txt").exists())  # 没到期的原样在
+        self.assertTrue(self.shelf.restore("另一本")["ok"])                         # 没到期的还能还原
+        self.assertEqual(self.shelf.purge_trash(30), {"ok": True, "purged": 0, "kept": 0})
+        # 时间读不懂的不动
+        self.assertTrue(self.shelf.add(self.txt, title="小书", author="甲", rights="public-domain", by="sister")["ok"])   # 真删了，可以重新收
+        self.shelf.remove("小书", "sister")
+        trash = self.shelf._trash_load()
+        trash["books"][0]["removedAt"] = "不是时间"
+        self.shelf._trash_save(trash)
+        self.assertEqual(self.shelf.purge_trash(30)["purged"], 0)
+        self.assertEqual(len(self.shelf.trash()), 1)
+        self.assertFalse(self.shelf.purge_trash(0)["ok"])
+        self.assertFalse(self.shelf.purge_trash("x")["ok"])
+
     def test_removing_a_book_does_not_reset_todays_reading(self):
         self.lib.config["shelf"] = {"dailyChars": 2500}
         self._two_books()
