@@ -594,6 +594,155 @@ class ShelfTests(Base):
         finally:
             shelf_mod.MAX_BOOK_BYTES = old
 
+    # ── 书架管理：来源 / 许可 / 分类、改信息、挪位置、拿走进回收站并能还原 ──
+    def _two_books(self):
+        other = self.tmp / "另一本.txt"
+        other.write_text("另一本的内容。\n\n" * 200, encoding="utf-8")
+        self.shelf.add(self.txt, title="小书", author="甲", rights="public-domain", by="sister",
+                       source_url="https://example.org/a", category="散文", license_note="公版（测试）")
+        self.shelf.add(other, title="另一本", rights="user-owned", by="owner")
+
+    def test_add_keeps_source_license_category(self):
+        self._two_books()
+        b = {x["title"]: x for x in self.shelf.list()}
+        self.assertEqual((b["小书"]["sourceUrl"], b["小书"]["license"], b["小书"]["category"], b["小书"]["addedBy"]),
+                         ("https://example.org/a", "公版（测试）", "散文", "sister"))
+        self.assertEqual([x["title"] for x in self.shelf.list("散文")], ["小书"])
+
+    def test_edit_title_author_source_keeps_progress(self):
+        self._two_books()
+        self.shelf.read("小书", "fish", chars=800)
+        self.shelf.bookmark("小书", "fish", note="好")
+        old_id = self.shelf.list()[0]["id"]
+        r = self.shelf.edit("小书", {"title": "新书名", "author": "乙", "sourceUrl": "https://example.org/b"}, "sister")
+        self.assertTrue(r["ok"], r)
+        b = self.shelf.list()[0]
+        self.assertEqual((b["id"], b["title"], b["author"], b["sourceUrl"]), (old_id, "新书名", "乙", "https://example.org/b"))
+        self.assertGreater(b["progress"]["fish"], 0)                       # 进度、书签跟着走
+        self.assertEqual(len(self.shelf.bookmarks("新书名")), 1)
+        self.assertEqual(self.shelf._load()["books"][0]["history"][-1]["by"], "sister")
+        self.assertFalse(self.shelf.edit("新书名", {"title": ""}, "sister")["ok"])
+        self.assertFalse(self.shelf.edit("新书名", {"sourceUrl": "javascript:x"}, "sister")["ok"])
+        self.assertFalse(self.shelf.edit("新书名", {"rights": "public-domain"}, "sister")["ok"])      # 许可类别不能随便改
+        self.assertFalse(self.shelf.edit("新书名", {"title": "另一本", "author": ""}, "sister")["ok"])   # 不能和别的书撞名
+        self.assertTrue(self.shelf.edit("新书名", {"title": "新书名"}, "sister")["ok"])
+        with self.assertRaises(KeyError):
+            self.shelf.edit("没有这本", {"title": "x"}, "sister")
+
+    def test_move_category_and_position(self):
+        self._two_books()
+        r = self.shelf.move("另一本", position="top")
+        self.assertEqual((r["position"], r["total"]), (1, 2))
+        self.assertEqual([x["title"] for x in self.shelf.list()], ["另一本", "小书"])
+        self.assertTrue(self.shelf.move("另一本", position=2, category="小说")["ok"])
+        self.assertEqual([x["title"] for x in self.shelf.list()], ["小书", "另一本"])
+        self.assertEqual(self.shelf.list("小说")[0]["title"], "另一本")
+        self.shelf.move("另一本", category="")
+        self.assertEqual(self.shelf.list("小说"), [])
+        self.assertTrue(self.shelf.move("小书", position="bottom")["ok"])
+        self.assertFalse(self.shelf.move("小书", position="abc")["ok"])
+        self.assertFalse(self.shelf.move("小书")["ok"])
+
+    def test_remove_goes_to_trash_and_restores_exactly(self):
+        self._two_books()
+        self.shelf.read("小书", "fish", chars=800)
+        self.shelf.bookmark("小书", "fish", note="好")
+        before = self.shelf._load()["books"][0]
+        text = (self.shelf.dir / before["file"]).read_text(encoding="utf-8")
+        r = self.shelf.remove("小书", "sister")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([x["title"] for x in self.shelf.list()], ["另一本"])
+        self.assertFalse((self.shelf.dir / before["file"]).exists())
+        self.assertEqual((self.shelf.dir / "trash" / f"{before['id']}.txt").read_text(encoding="utf-8"), text)   # 不是真删
+        t = self.shelf.trash()
+        self.assertEqual((t[0]["title"], t[0]["removedBy"]), ("小书", "sister"))
+        with self.assertRaises(KeyError):
+            self.shelf.read("小书", "fish")                                   # 书架上读不到了
+        again = self.shelf.add(self.txt, title="小书", author="甲", rights="public-domain", by="sister")
+        self.assertFalse(again["ok"])                                          # 重新收会提示去回收站找
+        self.assertIn("回收站", again["error"])
+        r = self.shelf.restore("小书")
+        self.assertTrue(r["ok"], r)
+        back = {x["title"]: x for x in self.shelf._load()["books"]}["小书"]
+        self.assertEqual({k: v for k, v in back.items()}, before)              # 记录原样回来：进度、书签、来源都在
+        self.assertEqual((self.shelf.dir / back["file"]).read_text(encoding="utf-8"), text)
+        self.assertEqual(self.shelf.trash(), [])
+        self.assertFalse((self.shelf.dir / "trash" / f"{before['id']}.txt").exists())
+        self.assertFalse(self.shelf.restore("小书")["ok"])
+        with self.assertRaises(KeyError):
+            self.shelf.remove("没有这本", "sister")
+
+    def test_removing_a_book_does_not_reset_todays_reading(self):
+        self.lib.config["shelf"] = {"dailyChars": 2500}
+        self._two_books()
+        self.assertTrue(self.shelf.read("小书", "fish", chars=1500)["ok"])
+        self.assertTrue(self.shelf.read("小书", "fish", chars=1500)["ok"])
+        self.shelf.remove("小书", "sister")
+        r = self.shelf.read("另一本", "fish", chars=800)
+        self.assertFalse(r["ok"])                                              # 今天的额度没有因为拿走一本而重来
+        self.assertTrue(r["limitReached"])
+
+
+# ───────────────────────── 逛一逛 ─────────────────────────
+
+class BrowseTests(Base):
+    @classmethod
+    def setUpClass(cls):
+        cls.lib = cls.new_home(seeds=("chime", "yearly"))
+        cls.book = cls.lib.book()
+        cls.book.add(name="蓝色大肥鱼", brief="测试用的新梗", source={"kind": "self", "by": "fish", "where": "测试群"})
+
+    def test_modes_and_menus(self):
+        b = self.book
+        menu = b.browse("topic")
+        self.assertTrue(menu["ok"] and menu["menu"])
+        self.assertLessEqual(len(menu["menu"]), 24)
+        self.assertIn("谐音", dict(menu["menu"]))
+        src = dict(b.browse("source")["menu"])
+        self.assertIn("自己学的", src)
+        self.assertFalse(b.browse("nonsense")["ok"])
+
+    def test_topic_pages_are_capped_and_consistent(self):
+        b = self.book
+        r1 = b.browse("topic", "谐音", page=1, per_page=50)         # 每页上限 10
+        self.assertEqual(r1["perPage"], 10)
+        self.assertEqual(len(r1["items"]), 10)
+        self.assertTrue(all(e["type"] == "谐音" for e in r1["items"]))
+        r2 = b.browse("topic", "谐音", page=2, per_page=10)
+        self.assertFalse({e["id"] for e in r1["items"]} & {e["id"] for e in r2["items"]})
+        last = b.browse("topic", "谐音", page=r1["pages"], per_page=10)
+        self.assertEqual(r1["total"], 10 * (r1["pages"] - 1) + len(last["items"]))
+        self.assertEqual(b.browse("topic", "谐音", page=r1["pages"] + 5)["items"], [])
+        kw = b.browse("topic", "city")                                # 不是类型就当关键词找
+        self.assertTrue(any(e["name"] == "city不city" for e in kw["items"]))
+
+    def test_source_and_recent_and_random(self):
+        b = self.book
+        mine = b.browse("source", "自己学的")
+        self.assertEqual([e["name"] for e in mine["items"]], ["蓝色大肥鱼"])
+        self.assertEqual(b.browse("source", "小鲸鱼")["total"], 1)       # 也认存的人的名字
+        self.assertGreater(b.browse("source", "CHIME")["total"], 1000)
+        self.assertEqual(b.browse("recent", per_page=3)["items"][0]["name"], "蓝色大肥鱼")
+        import random
+        r = b.browse("random", per_page=5, rng=random.Random(7))
+        self.assertEqual(len(r["items"]), 5)
+        self.assertNotEqual({e["id"] for e in r["items"]}, {e["id"] for e in b.browse("random", per_page=5, rng=random.Random(8))["items"]})
+
+    def test_hidden_entries_are_not_browsed(self):
+        e = self.book.add(name="将被藏起来的梗", brief="测试", source={"kind": "self", "by": "fish", "where": "群"})["entry"]
+        self.book.mark(e["id"], "fish", hidden=True)
+        names = {x["name"] for mode in ("recent", "random") for x in self.book.browse(mode, per_page=10)["items"]}
+        self.assertNotIn("将被藏起来的梗", names)
+        self.assertNotIn("将被藏起来的梗", {x["name"] for x in self.book.browse("source", "自己学的")["items"]})
+
+    def test_render_is_short(self):
+        out = render.render_browse(self.lib, self.book.browse("topic", "谐音", per_page=10))
+        self.assertLess(len(out), 1000)
+        self.assertIn("page=2", out)
+        self.assertIn("共", render.render_browse(self.lib, self.book.browse("recent")))
+        self.assertIn("没翻成", render.render_browse(self.lib, self.book.browse("nonsense")))
+        self.assertIn("这一页没有了", render.render_browse(self.lib, self.book.browse("topic", "谐音", page=999)))
+
 
 # ───────────────────────── HTTP 接口 ─────────────────────────
 
@@ -735,7 +884,7 @@ class McpTests(Base):
         self.assertIn("tools", r["result"]["capabilities"])
         self.assertIsNone(h.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
         names = {t["name"] for t in self.rpc(h, "tools/list")["result"]["tools"]}
-        self.assertEqual(names, {"library_lookup", "library_save", "library_mark", "library_scan",
+        self.assertEqual(names, {"library_lookup", "library_save", "library_mark", "library_scan", "library_browse",
                                  "shelf_list", "shelf_read", "shelf_status", "shelf_bookmark"})
         self.assertIn("error", self.rpc(h, "no/such"))
 
@@ -773,6 +922,29 @@ class McpTests(Base):
         self.assertIn("没有", self.text(h, "library_scan", message="今天天气不错")[0])
         text, err = self.text(h, "no_such_tool")
         self.assertTrue(err)
+
+    def test_browse_tool(self):
+        h = mcp_server.Handler(self.lib, "fish")
+        text, err = self.text(h, "library_browse", mode="topic")
+        self.assertFalse(err)
+        self.assertIn("谐音", text)
+        text, _ = self.text(h, "library_browse", mode="topic", value="谐音", per_page=99)
+        self.assertEqual(text.count("· 「"), 10)                         # 一页最多十条
+        self.assertIn("page=2", text)
+        text, _ = self.text(h, "library_browse", mode="topic", value="谐音", page=2, per_page=3)
+        self.assertIn("第 2/", text)
+        self.assertIn("没翻成", self.text(h, "library_browse", mode="bogus")[0])
+        self.assertIn("随手翻到", self.text(h, "library_browse", mode="random")[0])
+        self.assertEqual(self.text(h, "library_browse")[0].count("· 「"), 8)      # 默认最近新增，一页 8 条
+
+    def test_shelf_list_shows_category(self):
+        d = Path(tempfile.mkdtemp(prefix="dlolib-mcp4-"))
+        self.homes.append(d)
+        f = d / "书.txt"
+        f.write_text("第一段。\n\n" * 50, encoding="utf-8")
+        self.lib.shelf().add(f, title="分类书", rights="user-owned", by="owner", category="散文")
+        h = mcp_server.Handler(self.lib, "fish")
+        self.assertIn("【散文】《分类书》", self.text(h, "shelf_list")[0])
 
     def test_unknown_agent_refused(self):
         with self.assertRaises(ValueError):
@@ -982,6 +1154,34 @@ class CliTests(Base):
         self.assertIn("泰裤辣", out)
         code, out, _ = self.run_cli(home, "stats")
         self.assertEqual(json.loads(out)["bySource"]["owner"], 1)
+
+    def test_cli_shelf_management_and_browse(self):
+        home = Path(tempfile.mkdtemp(prefix="dlolib-cli2-"))
+        self.homes.append(home)
+        self.run_cli(home, "init", "--seed", "chime")
+        book = home / "书.txt"
+        book.write_text("这是一本小书。\n\n" * 100, encoding="utf-8")
+        code, out, err = self.run_cli(home, "--json", "shelf", "add", str(book), "--title", "小书", "--rights", "public-domain",
+                                      "--by", "sister", "--url", "https://example.org/a", "--category", "散文",
+                                      "--license-note", "公版（测试）")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(json.loads(out)["ok"])
+        code, out, _ = self.run_cli(home, "--json", "shelf", "edit", "小书", "--title", "新名字", "--by", "sister")
+        self.assertTrue(json.loads(out)["ok"])
+        code, out, _ = self.run_cli(home, "--json", "shelf", "move", "新名字", "--category", "小说", "--position", "top")
+        self.assertEqual(json.loads(out)["category"], "小说")
+        code, out, _ = self.run_cli(home, "--json", "shelf", "remove", "新名字", "--by", "sister")
+        self.assertTrue(json.loads(out)["ok"])
+        code, out, _ = self.run_cli(home, "--json", "shelf", "trash")
+        self.assertEqual(json.loads(out)[0]["title"], "新名字")
+        code, out, _ = self.run_cli(home, "--json", "shelf", "restore", "新名字")
+        self.assertTrue(json.loads(out)["ok"])
+        code, out, _ = self.run_cli(home, "--json", "shelf", "remove", "没有这本")             # 不抛一屏错误
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(out)["ok"])
+        code, out, _ = self.run_cli(home, "browse", "--mode", "topic", "--value", "谐音", "--per-page", "3")
+        self.assertIn("第 1/", out)
+        self.assertEqual(out.count("· 「"), 3)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ import sys
 
 from . import render
 from .shelf import READ_STATUS
-from .store import STATUSES, Library
+from .store import BROWSE_MODES, STATUSES, Library
 
 PROTOCOL = "2024-11-05"
 TOGETHER = "together"          # 「一起读」共用的读者名：进度共用，谁读都往下走
@@ -30,6 +30,17 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "query": {"type": "string", "description": "想查的词或句子"},
             "k": {"type": "integer", "description": "最多给几条，默认 3"}}, "required": ["query"]},
+    },
+    {
+        "name": "library_browse",
+        "description": "不查具体哪个梗，随便逛一逛图书馆的工具书：按话题翻（mode=topic，value 写类型，比如 谐音、引用；不写 value 就看有哪些话题）、"
+                       "按来源翻（mode=source，比如 自己学的、打底的数据集名）、看最近新增的（recent）、随便翻翻（random）。"
+                       "一页最多十条，只给名字和半句意思；想看全部再用 library_lookup 查名字。",
+        "inputSchema": {"type": "object", "properties": {
+            "mode": {"type": "string", "enum": list(BROWSE_MODES), "description": "topic / source / recent / random，默认 recent"},
+            "value": {"type": "string", "description": "话题或来源的名字（topic / source 用）"},
+            "page": {"type": "integer", "description": "第几页，默认 1"},
+            "per_page": {"type": "integer", "description": "一页几条，最多 10，默认 8"}}},
     },
     {
         "name": "library_save",
@@ -104,6 +115,10 @@ class Handler:
             q = str(args.get("query", ""))
             res = lib.book().search(q, k=max(1, min(10, int(args.get("k") or 3))))
             return render.render_search(lib, q, res)
+        if name == "library_browse":
+            res = lib.book().browse(str(args.get("mode") or "recent"), str(args.get("value") or ""),
+                                    page=args.get("page") or 1, per_page=args.get("per_page") or 8)
+            return render.render_browse(lib, res)
         if name == "library_save":
             src = {"kind": "asked" if args.get("url") else "self", "by": who, "where": str(args.get("where", "")),
                    "url": str(args.get("url", ""))}
@@ -129,7 +144,9 @@ class Handler:
                 mine, together = b["progress"].get(who, 0), b["progress"].get(TOGETHER, 0)
                 state = READ_STATUS.get((b.get("status") or {}).get(who), "")
                 extra = f"；一起读到 {together} 字" if together else ""
-                return f"《{b['title']}》{b['author'] or ''}　{('（' + state + '）') if state else ''}你读到 {mine}/{b['chars']} 字{extra}"
+                cat = f"【{b['category']}】" if b.get("category") else ""
+                return (f"{cat}《{b['title']}》{b['author'] or ''}　{('（' + state + '）') if state else ''}"
+                        f"你读到 {mine}/{b['chars']} 字{extra}")
             return "\n".join(line(b) for b in rows)
         if name == "shelf_status":
             r = shelf.set_status(str(args.get("book", "")), who, str(args.get("status", "")))

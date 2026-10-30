@@ -2,10 +2,14 @@
 书架：普通书（从头读到尾的那种）。想读 / 在读 / 读完了、读到哪、书签、每天读了多少。
 
 不随项目附带任何书。只能导入两种：公版书（public-domain）和用户自己有的电子书（user-owned），
-或者明确开放许可的（open-license）。核心从不联网下载书，文件由用户自己放进来。
+或者明确开放许可的（open-license）。核心从不联网下载书，文件由用户（或接入程序）自己放进来。
 
 存在 <home>/shelf/shelf.json，正文转成纯文本放 <home>/shelf/texts/<id>.txt。
 「读者」是任意字符串（agent id）。几个人一起读，就用一个共同的读者名（比如 together），进度共用。
+
+书架管理（谁有权限由接入程序管，核心只提供动作）：改书名 / 作者 / 来源 / 许可说明 / 分类（edit）、挪位置（move）、
+拿走（remove）和还原（restore）。拿走不是真删：书的记录（连同进度、书签）存进 <home>/shelf/trash.json，
+正文挪进 <home>/shelf/trash/，想找回来 restore 一下就回到原来的样子。
 """
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ import html.parser
 import json
 import posixpath
 import re
+import shutil
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,6 +30,8 @@ RIGHTS = {"public-domain": "公版", "user-owned": "自己有的", "open-license
 READ_STATUS = {"want": "想读", "reading": "在读", "done": "读完了"}
 MAX_BOOK_BYTES = 30 * 1024 * 1024      # 单本解压后上限，防压缩炸弹
 DEFAULT_CHUNK = 1500
+HISTORY_MAX = 20
+EDIT_FIELDS = {"title": 80, "author": 60, "sourceUrl": 300, "license": 200, "category": 20}   # 能改的字段和长度上限
 
 
 def today(tz_hours: float = 8) -> str:
@@ -109,6 +116,7 @@ class Shelf:
         self.lib = lib
         self.dir = lib.home / "shelf"
         self.file = self.dir / "shelf.json"
+        self.trash_file = self.dir / "trash.json"
         (self.dir / "texts").mkdir(parents=True, exist_ok=True)
 
     def _load(self) -> dict:
@@ -126,14 +134,27 @@ class Shelf:
                 return b
         raise KeyError(f"书架上没有《{book}》")
 
-    def list(self) -> list:
+    def _trash_load(self) -> dict:
+        if not self.trash_file.exists():
+            return {"books": []}
+        with open(self.trash_file, encoding="utf-8") as f:
+            return json.load(f)
+
+    def _trash_save(self, data):
+        write_atomic(self.trash_file, json.dumps(data, ensure_ascii=False, indent=1))
+
+    def list(self, category: str = "") -> list:
         out = []
         for b in self._load()["books"]:
+            if category and (b.get("category") or "") != category:
+                continue
             out.append({k: b.get(k) for k in ("id", "title", "author", "rights", "chars", "status", "progress",
-                                               "addedAt")} | {"bookmarks": len(b.get("bookmarks", []))})
+                                               "addedAt", "addedBy", "category", "sourceUrl", "license")}
+                       | {"bookmarks": len(b.get("bookmarks", []))})
         return out
 
-    def add(self, path, *, title: str, author: str = "", rights: str, by: str, source_url: str = "") -> dict:
+    def add(self, path, *, title: str, author: str = "", rights: str, by: str, source_url: str = "",
+            category: str = "", license_note: str = "") -> dict:
         if rights not in RIGHTS:
             return {"ok": False, "error": f"rights 只能是 {'/'.join(RIGHTS)}（不收来路不明的书）"}
         path = Path(path)
@@ -146,13 +167,126 @@ class Shelf:
             data = self._load()
             if any(b["id"] == book_id for b in data["books"]):
                 return {"ok": False, "error": f"《{title}》已经在书架上了"}
+            if any(b["id"] == book_id for b in self._trash_load()["books"]):
+                return {"ok": False, "error": f"《{title}》在回收站里，可以还原回来"}
             write_atomic(self.dir / "texts" / f"{book_id}.txt", text)
             b = {"id": book_id, "title": title, "author": author, "rights": rights, "sourceUrl": source_url,
+                 "license": str(license_note or "")[:EDIT_FIELDS["license"]],
+                 "category": str(category or "")[:EDIT_FIELDS["category"]],
                  "file": f"texts/{book_id}.txt", "chars": len(text), "addedAt": now_iso(), "addedBy": by,
                  "status": {}, "progress": {}, "bookmarks": [], "readLog": {}}
             data["books"].append(b)
             self._save(data)
             return {"ok": True, "book": b}
+
+    # ── 书架管理：改信息 / 挪位置 / 拿走（进回收站）/ 还原 ──
+    def edit(self, book: str, fields: dict, by: str) -> dict:
+        """改书名 / 作者 / 来源网址 / 许可说明 / 分类。书的 id 不变（进度、书签都跟着）。"""
+        bad = set(fields) - set(EDIT_FIELDS)
+        if bad:
+            return {"ok": False, "error": f"这些不能改：{'、'.join(sorted(bad))}"}
+        clean = {}
+        for k, v in fields.items():
+            v = str(v if v is not None else "").strip()
+            if len(v) > EDIT_FIELDS[k]:
+                return {"ok": False, "error": f"{k} 太长了，{EDIT_FIELDS[k]} 字以内"}
+            if k == "title" and not v:
+                return {"ok": False, "error": "书名不能空"}
+            if k == "sourceUrl" and v and not re.match(r"^https?://", v, re.I):
+                return {"ok": False, "error": "来源要写网址（http 或 https 开头），没有就留空"}
+            clean[k] = v
+        with locked(self.file):
+            data = self._load()
+            b = self._find(data, book)
+            changed = {k: v for k, v in clean.items() if (b.get(k) or "") != v}
+            if not changed:
+                return {"ok": True, "book": b, "note": "没有变化"}
+            t, a = changed.get("title", b["title"]), changed.get("author", b.get("author", ""))
+            if any(x is not b and x["title"] == t and (x.get("author") or "") == a for x in data["books"]):
+                return {"ok": False, "error": f"书架上已经有一本《{t}》了"}
+            at = now_iso()
+            before = {k: b.get(k, "") for k in changed}
+            b.update(changed)
+            b.setdefault("history", []).append({"at": at, "by": by, "op": "edit", "fields": sorted(changed),
+                                                "before": before})
+            b["history"] = b["history"][-HISTORY_MAX:]
+            self._save(data)
+            return {"ok": True, "book": b}
+
+    def move(self, book: str, category=None, position=None) -> dict:
+        """换分类（category，空字符串 = 不分类）和/或挪位置（position：从 1 数起的名次，或 top / bottom）。"""
+        if category is None and position is None:
+            return {"ok": False, "error": "要给 category 或 position"}
+        if category is not None and len(str(category).strip()) > EDIT_FIELDS["category"]:
+            return {"ok": False, "error": f"分类名太长了，{EDIT_FIELDS['category']} 字以内"}
+        with locked(self.file):
+            data = self._load()
+            b = self._find(data, book)
+            if position is not None:
+                books = data["books"]
+                pos = str(position).strip().lower()
+                if pos in ("top", "first"):
+                    idx = 0
+                elif pos in ("bottom", "last"):
+                    idx = len(books) - 1
+                else:
+                    try:
+                        idx = max(1, min(int(pos), len(books))) - 1
+                    except ValueError:
+                        return {"ok": False, "error": "position 写名次（1、2、3……）或 top / bottom"}
+                books.remove(b)
+                books.insert(idx, b)
+            if category is not None:
+                b["category"] = str(category).strip()
+            self._save(data)
+            order = [x["id"] for x in data["books"]]
+            return {"ok": True, "book": b["title"], "category": b.get("category", ""),
+                    "position": order.index(b["id"]) + 1, "total": len(order)}
+
+    def remove(self, book: str, by: str) -> dict:
+        """把一本书拿下书架。不是真删：记录（连同进度、书签）进 trash.json，正文挪进 trash/，restore 能原样还原。"""
+        with locked(self.file):
+            data = self._load()
+            b = self._find(data, book)
+            trash = self._trash_load()
+            if any(x["id"] == b["id"] for x in trash["books"]):
+                return {"ok": False, "error": f"回收站里已经有一本同样的《{b['title']}》了，先处理那一本"}
+            src = self.dir / b["file"]
+            (self.dir / "trash").mkdir(parents=True, exist_ok=True)
+            if src.exists():
+                shutil.copy2(src, self.dir / "trash" / f"{b['id']}.txt")     # 先拷过去、记录都写好了再删原件，中途出事不会丢书
+            data["books"] = [x for x in data["books"] if x is not b]
+            trash["books"].append({**b, "removedAt": now_iso(), "removedBy": by})
+            self._trash_save(trash)
+            self._save(data)
+            if src.exists():
+                src.unlink()
+            return {"ok": True, "removed": b["title"], "id": b["id"]}
+
+    def trash(self) -> list:
+        return [{k: b.get(k) for k in ("id", "title", "author", "chars", "removedAt", "removedBy", "category")}
+                for b in self._trash_load()["books"]]
+
+    def restore(self, book: str) -> dict:
+        with locked(self.file):
+            trash = self._trash_load()
+            hit = next((x for x in trash["books"] if x["id"] == book or x["title"] == book), None)
+            if hit is None:
+                return {"ok": False, "error": f"回收站里没有《{book}》"}
+            data = self._load()
+            if any(x["id"] == hit["id"] for x in data["books"]):
+                return {"ok": False, "error": f"书架上已经有《{hit['title']}》了"}
+            src = self.dir / "trash" / f"{hit['id']}.txt"
+            if not src.exists():
+                return {"ok": False, "error": f"《{hit['title']}》的正文在回收站里找不到了"}
+            shutil.copy2(src, self.dir / hit["file"])
+            back = {k: v for k, v in hit.items() if k not in ("removedAt", "removedBy")}
+            data["books"].append(back)
+            trash["books"] = [x for x in trash["books"] if x is not hit]
+            self._save(data)
+            self._trash_save(trash)
+            src.unlink()
+            return {"ok": True, "book": back["title"], "id": back["id"]}
 
     def set_status(self, book: str, reader: str, status: str) -> dict:
         if status not in READ_STATUS:
@@ -186,7 +320,8 @@ class Shelf:
             data = self._load()
             b = self._find(data, book)
             day = today()
-            done_today = sum(x.get("readLog", {}).get(day, {}).get(payer, 0) for x in data["books"])   # 今天所有书加起来
+            done_today = sum(x.get("readLog", {}).get(day, {}).get(payer, 0)       # 今天所有书加起来（回收站里的也算，拿走一本不会让额度重来）
+                             for x in data["books"] + self._trash_load()["books"])
             if limit and done_today >= limit:
                 return {"ok": False, "error": "今天读得不少了，明天接着读吧", "todayChars": done_today, "limitReached": True}
             text = (self.dir / b["file"]).read_text(encoding="utf-8")

@@ -103,6 +103,23 @@ python -m dlolib --home ./my-library shelf list
 - **不附带任何有版权的书**，核心也从不联网下载书。只能导入 `public-domain`（公版）、`user-owned`（你自己有的）、`open-license`（明确开放许可）三种，导入时必须写明。
 - 支持 `.txt`（UTF-8 / GB18030）、`.md`、`.epub`、`.html`。
 - 「读者」是任意字符串；几个人一起读就用同一个读者名，进度共用。可以在 `library.config.json` 里设每人每天最多读多少字（`shelf.dailyChars`）。
+- 导入时可以带上来源网址（`--url`）、许可说明（`--license-note`）和分类（`--category`）。
+- **书架管理**：`shelf edit`（书名 / 作者 / 来源 / 许可说明 / 分类，书的 id 不变，进度书签跟着）、`shelf move`（换分类、挪位置：名次或 top / bottom）、`shelf remove`（拿下书架）、`shelf restore`、`shelf trash`。拿下书架**不是真删**：记录（连同进度、书签）进 `shelf/trash.json`，正文挪进 `shelf/trash/`，`restore` 原样放回；回收站里的阅读字数仍算在当天的每日额度里。核心只提供这些动作，**谁有权限用，由接入程序决定**（MCP 里没有这些工具）。
+- 核心不联网取书；想从网上取公版书，由接入程序自己取回文本、写成临时文件，再用 `shelf add` 导入。
+
+## 逛一逛
+
+不查具体哪个梗，随便翻：
+
+```bash
+python -m dlolib --home ./my-library browse --mode topic                       # 先看有哪些话题（类型）
+python -m dlolib --home ./my-library browse --mode topic --value 谐音 --page 2
+python -m dlolib --home ./my-library browse --mode source --value 自己学的      # 来源：打底的数据集名 / 自己学的 / 某个 agent 的名字…
+python -m dlolib --home ./my-library browse --mode recent                      # 最近新增
+python -m dlolib --home ./my-library browse --mode random                      # 随便翻翻
+```
+
+每页最多 10 条（默认 8），只给名字、类型和半句意思；隐藏的条目不出现。MCP 里对应 `library_browse`。
 
 ## MCP 接入
 
@@ -119,7 +136,7 @@ python -m dlolib --home ./my-library shelf list
 }
 ```
 
-工具：`library_lookup`、`library_save`、`library_mark`、`library_scan`、`shelf_list`、`shelf_read`、`shelf_bookmark`。
+工具：`library_lookup`、`library_save`、`library_mark`、`library_scan`、`library_browse`、`shelf_list`、`shelf_read`、`shelf_status`、`shelf_bookmark`。
 
 **「谁存的」由 `--agent` 在启动时固定**，模型自己没法填、也没法冒名别人。agent id 要先登记在 `library.config.json` 的 `agents` 里：
 

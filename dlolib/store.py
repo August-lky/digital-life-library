@@ -40,6 +40,9 @@ EDITABLE = {"name", "aliases", "brief", "meaning", "origin", "examples", "era", 
 BRIEF_MAX = 80
 NAME_MAX = 30
 HISTORY_MAX = 20
+BROWSE_MODES = ("topic", "source", "recent", "random")
+BROWSE_PER_PAGE = 8      # 逛一逛每页默认几条
+BROWSE_MAX = 10          # 每页最多几条（输出要短）
 
 DEFAULT_BOOKS = {
     "books": [{
@@ -658,6 +661,58 @@ class Book:
             self.entries = [x for x in self.entries if x["id"] != entry_id]
             self._save()
             return {"ok": True, "removed": e["name"]}
+
+    # ── 逛一逛（不是查：没有关键词，按话题 / 来源 / 最近新增 / 随便翻翻 一页一页看）──
+    def browse(self, mode: str = "recent", value: str = "", page: int = 1, per_page: int = BROWSE_PER_PAGE,
+               rng=None) -> dict:
+        """隐藏的条目不出现。每页最多 BROWSE_MAX 条。topic / source 不给 value 时只返回「有哪些话题 / 来源」的目录。
+
+        topic：value 是类型（现象、谐音、引用……）或年代；对不上类型就当关键词在名字、意思、出处里找。
+        source：value 是来源（打底 / 自己学的 / 某某让搜的 / 手填，或数据集名、存的人的名字）。
+        recent：最近新增的在前。random：随便翻翻，每次不一样，不分页。"""
+        if mode not in BROWSE_MODES:
+            return {"ok": False, "error": f"mode 只能是 {'/'.join(BROWSE_MODES)}"}
+        try:
+            per_page = max(1, min(int(per_page or BROWSE_PER_PAGE), BROWSE_MAX))
+            page = max(1, int(page or 1))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "page / per_page 要是数字"}
+        value = str(value or "").strip()
+        lib = self.lib
+        pool = [(i, e) for i, e in enumerate(self.entries) if not e.get("hidden")]
+
+        def src_names(e):
+            s_ = e.get("source", {}) or {}
+            return {n.lower() for n in (s_.get("kind"), lib.label(s_.get("kind", "")), s_.get("dataset"),
+                                       s_.get("by"), lib.agent_name(s_.get("by", "")) if s_.get("by") else "") if n}
+        if mode in ("topic", "source") and not value:
+            if mode == "topic":
+                menu = Counter(e.get("type") for _, e in pool if e.get("type"))
+            else:
+                menu = Counter()
+                for _, e in pool:
+                    s_ = e.get("source", {}) or {}
+                    menu[s_.get("dataset") or lib.label(s_.get("kind", ""))] += 1
+            return {"ok": True, "mode": mode, "menu": menu.most_common(24), "total": len(pool)}
+        if mode == "topic":
+            rows = [(i, e) for i, e in pool if value in (e.get("type"), e.get("era"))]
+            if not rows:
+                nv = norm(value)
+                rows = [(i, e) for i, e in pool if nv and nv in norm(" ".join(
+                    [e["name"], *e.get("aliases", []), e.get("brief") or "", e.get("origin") or ""]))]
+        elif mode == "source":
+            rows = [(i, e) for i, e in pool if value.lower() in src_names(e)]
+        elif mode == "recent":
+            rows = sorted(pool, key=lambda t: (t[1].get("createdAt") or "", t[0]), reverse=True)
+        else:
+            import random
+            r = rng or random
+            rows = r.sample(pool, min(per_page, len(pool)))
+        total = len(pool) if mode == "random" else len(rows)
+        pages = 1 if mode == "random" else max(1, -(-len(rows) // per_page))
+        shown = rows if mode == "random" else rows[(page - 1) * per_page: page * per_page]
+        return {"ok": True, "mode": mode, "value": value, "total": total, "page": 1 if mode == "random" else page,
+                "pages": pages, "perPage": per_page, "items": [e for _, e in shown]}
 
     # ── 列表 / 统计（管理页用）──
     def list(self, source="", by="", status="", q="", include_hidden=True, offset=0, limit=50) -> dict:

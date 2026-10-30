@@ -9,7 +9,9 @@
   import chime|wikipedia|yearly   导入随项目带的打底数据（不联网）
   fetch-wikipedia             联网读维基「中国大陆网络用语列表」（慢速、只读、2 个请求），原文只存本机缓存
   build-wikipedia-seed        用缓存里的词条名 + briefs.json 里自己写的释义，生成 wikipedia_netslang.json
-  shelf ...                   书架：add / list / read / status / bookmark / bookmarks / log
+  shelf ...                   书架：add / list / read / status / bookmark / bookmarks / log，
+                              管理：edit（改书名等）/ move（分类、位置）/ remove（进回收站）/ restore / trash
+  browse                      逛一逛工具书：--mode topic|source|recent|random
   serve                       HTTP 接口 + 管理页（127.0.0.1:3212）
   mcp --agent <id>            stdio MCP 服务，--agent 固定「谁存的」
   export --out DIR            公开导出（按许可过滤、剥隐私字段、用私有词表扫一遍）
@@ -26,7 +28,7 @@ import sys
 from pathlib import Path
 
 from . import importers, render
-from .store import Library, STATUSES
+from .store import BROWSE_MODES, Library, STATUSES
 
 
 def out_json(o):
@@ -115,7 +117,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--rights", required=True, choices=("public-domain", "user-owned", "open-license"))
     s.add_argument("--by", default="owner")
     s.add_argument("--url", default="")
-    ssub.add_parser("list")
+    s.add_argument("--category", default="")
+    s.add_argument("--license-note", default="")
+    s = ssub.add_parser("list")
+    s.add_argument("--category", default="")
     s = ssub.add_parser("read")
     s.add_argument("book")
     s.add_argument("--reader", default="owner")
@@ -134,6 +139,30 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--reader", default="")
     s = ssub.add_parser("log")
     s.add_argument("--days", type=int, default=7)
+    s = ssub.add_parser("edit")
+    s.add_argument("book")
+    s.add_argument("--title")
+    s.add_argument("--author")
+    s.add_argument("--url", help="来源网址")
+    s.add_argument("--license-note")
+    s.add_argument("--category")
+    s.add_argument("--by", default="owner")
+    s = ssub.add_parser("move")
+    s.add_argument("book")
+    s.add_argument("--category")
+    s.add_argument("--position", help="名次（1、2、3……）或 top / bottom")
+    s = ssub.add_parser("remove")
+    s.add_argument("book")
+    s.add_argument("--by", default="owner")
+    s = ssub.add_parser("restore")
+    s.add_argument("book")
+    ssub.add_parser("trash")
+
+    p = sub.add_parser("browse")
+    p.add_argument("--mode", default="recent", choices=BROWSE_MODES)
+    p.add_argument("--value", default="")
+    p.add_argument("--page", type=int, default=1)
+    p.add_argument("--per-page", type=int, default=8)
 
     p = sub.add_parser("serve")
     p.add_argument("--host", default="127.0.0.1")
@@ -176,9 +205,22 @@ def _run_shelf(lib, a):
     shelf = lib.shelf()
     c = a.shelf_cmd
     if c == "add":
-        return shelf.add(a.path, title=a.title, author=a.author, rights=a.rights, by=a.by, source_url=a.url)
+        return shelf.add(a.path, title=a.title, author=a.author, rights=a.rights, by=a.by, source_url=a.url,
+                         category=a.category, license_note=a.license_note)
     if c == "list":
-        return shelf.list()
+        return shelf.list(a.category)
+    if c == "edit":
+        names = {"title": a.title, "author": a.author, "sourceUrl": a.url, "license": a.license_note,
+                 "category": a.category}
+        return shelf.edit(a.book, {k: v for k, v in names.items() if v is not None}, a.by)
+    if c == "move":
+        return shelf.move(a.book, category=a.category, position=a.position)
+    if c == "remove":
+        return shelf.remove(a.book, a.by)
+    if c == "restore":
+        return shelf.restore(a.book)
+    if c == "trash":
+        return shelf.trash()
     if c == "read":
         return shelf.read(a.book, a.reader, chars=a.chars, restart=a.restart)
     if c == "status":
@@ -242,7 +284,15 @@ def _cmd_export(a, lib):
 
 
 def _cmd_shelf(a, lib):
-    return _emit(a, _run_shelf(lib, a))
+    try:
+        return _emit(a, _run_shelf(lib, a))
+    except KeyError as e:                       # 书架上没有这本：回一个说明，不要抛一屏错误
+        return _emit(a, {"ok": False, "error": str(e.args[0]) if e.args else str(e)}, ok=False)
+
+
+def _cmd_browse(a, lib, book):
+    res = book.browse(a.mode, a.value, page=a.page, per_page=a.per_page)
+    return _emit(a, res, text=render.render_browse(lib, res), ok=res.get("ok"))
 
 
 def _cmd_find(a, lib, book):
@@ -310,7 +360,7 @@ NO_HOME_CMDS = {"init": _cmd_init, "fetch-wikipedia": _cmd_fetch_wikipedia,
 LIB_CMDS = {"serve": _cmd_serve, "mcp": _cmd_mcp, "export": _cmd_export, "shelf": _cmd_shelf}
 BOOK_CMDS = {"find": _cmd_find, "scan": _cmd_scan, "show": _cmd_show, "list": _cmd_list, "stats": _cmd_stats,
              "add": _cmd_add, "update": _cmd_update, "mark": _cmd_mark, "remove": _cmd_remove,
-             "import": _cmd_import}
+             "import": _cmd_import, "browse": _cmd_browse}
 
 
 def main(argv=None) -> int:

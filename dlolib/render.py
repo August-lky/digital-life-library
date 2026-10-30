@@ -72,5 +72,33 @@ def render_search(lib, query: str, results: list) -> str:
     return "\n".join(render_entry(lib, r["entry"], r["score"], r["why"]) for r in results)
 
 
+BROWSE_MODE_NAME = {"topic": "按话题", "source": "按来源", "recent": "最近新增", "random": "随便翻翻"}
+
+
+def render_browse(lib, res: dict) -> str:
+    """逛一逛的结果：每条一行（名字、类型、半句意思），最后告诉怎么翻下一页。要短。"""
+    if not res.get("ok"):
+        return "没翻成：" + res.get("error", "")
+    mode = res["mode"]
+    if "menu" in res:
+        what = "话题（类型）" if mode == "topic" else "来源"
+        names = "、".join(f"{n}（{c}）" for n, c in res["menu"]) or "还没有"
+        return f"{what}有：{names}。挑一个当 value 再翻。"
+    items = res["items"]
+    if not items:
+        return f"这一页没有了（{BROWSE_MODE_NAME[mode]}{('：' + res['value']) if res.get('value') else ''}，共 {res['total']} 条）。"
+    head = f"{BROWSE_MODE_NAME[mode]}{('：' + res['value']) if res.get('value') else ''}"
+    head += f"，随手翻到 {len(items)} 条" if mode == "random" else f"，共 {res['total']} 条，第 {res['page']}/{res['pages']} 页"
+    lines = [head]
+    for e in items:
+        tag = f"[{e['type']}]" if e.get("type") else ""
+        flag = "（可能冒犯人）" if (e.get("flags") or {}).get("offense") else ""
+        lines.append(f"· 「{e['name']}」{tag}{clip(e.get('brief') or e.get('meaning'), 36)}{flag}")
+    if mode != "random" and res["page"] < res["pages"]:
+        lines.append(f"接着翻：page={res['page'] + 1}")
+    lines.append("想看某一条的全部，用 library_lookup 查它的名字。")
+    return "\n".join(lines)
+
+
 def render_scan(entries: list) -> str:
     return "\n".join(f"（这句话里有梗：「{e['name']}」—— {clip(e.get('brief'), 40)}）" for e in entries) or "（没有）"
